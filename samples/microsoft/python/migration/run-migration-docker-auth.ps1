@@ -1,6 +1,7 @@
 #!/usr/bin/env pwsh
 # Docker migration runner with automatic token authentication
 # This script handles token generation and Docker execution automatically
+# REQUIRES: --production-resource, --production-subscription, --production-tenant
 
 param(
     [Parameter(ValueFromRemainingArguments)]
@@ -40,7 +41,7 @@ try {
     exit 1
 }
 
-# Parse arguments to detect production mode and connection string usage
+# Parse arguments - production parameters are REQUIRED
 $productionTenant = $null
 $sourceTenant = $null
 $productionResource = $null
@@ -64,6 +65,25 @@ for ($i = 0; $i -lt $Arguments.Length; $i++) {
         $useConnectionString = $true
         Write-Host "${Blue}📝 Detected project connection string usage${Reset}"
     }
+}
+
+# Validate required production parameters
+if (-not $productionResource -or -not $productionSubscription -or -not $productionTenant) {
+    Write-Host "${Red}❌ Missing required production parameters!${Reset}"
+    Write-Host ""
+    Write-Host "REQUIRED parameters:"
+    Write-Host "  --production-resource <resource-name>       (e.g., nextgen-eastus)"
+    Write-Host "  --production-subscription <subscription-id> (e.g., b1615458-c1ea-49bc-8526-cafc948d3c25)"
+    Write-Host "  --production-tenant <tenant-id>            (e.g., 33e577a9-b1b8-4126-87c0-673f197bf624)"
+    Write-Host ""
+    Write-Host "Example:"
+    Write-Host "  .\run-migration-docker-auth.ps1 --use-api \" -ForegroundColor Yellow
+    Write-Host "    --source-tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 \" -ForegroundColor Yellow
+    Write-Host "    --production-resource nextgen-eastus \" -ForegroundColor Yellow
+    Write-Host "    --production-subscription b1615458-c1ea-49bc-8526-cafc948d3c25 \" -ForegroundColor Yellow
+    Write-Host "    --production-tenant 33e577a9-b1b8-4126-87c0-673f197bf624 \" -ForegroundColor Yellow
+    Write-Host "    asst_wBMH6Khnqbo1J7W1G6w3p1rN" -ForegroundColor Yellow
+    exit 1
 }
 
 # Generate source token (still needed even with connection string - SDK requires credential)
@@ -150,69 +170,58 @@ if ($useConnectionString -and $sourceTenant) {
     }
 }
 
-# Handle production authentication
+# Handle production authentication (REQUIRED)
 $productionToken = $null
-if ($productionTenant) {
-    Write-Host "${Blue}🏭 Production mode detected - handling production tenant authentication${Reset}"
-    Write-Host "${Blue}🔐 Switching to production tenant: $productionTenant${Reset}"
+Write-Host "${Blue}🏭 Production v2 API Configuration:${Reset}"
+Write-Host "${Blue}   � Resource: $productionResource${Reset}"
+Write-Host "${Blue}   📋 Subscription: $productionSubscription${Reset}"
+Write-Host "${Blue}   🔐 Tenant: $productionTenant${Reset}"
+
+Write-Host "${Blue}🔐 Switching to production tenant: $productionTenant${Reset}"
+
+try {
+    # Check current tenant
+    $currentTenant = az account show --query tenantId -o tsv 2>$null
     
-    try {
-        # Check current tenant
-        $currentTenant = az account show --query tenantId -o tsv 2>$null
-        
-        if ($currentTenant -eq $productionTenant) {
-            Write-Host "${Green}✅ Already authenticated with production tenant${Reset}"
-        } else {
-            Write-Host "${Yellow}🔄 Switching from tenant $currentTenant to $productionTenant${Reset}"
-            az login --tenant $productionTenant --only-show-errors
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "${Red}❌ Failed to authenticate with production tenant${Reset}"
-                exit 1
-            }
-        }
-        
-        # Generate production token
-        Write-Host "${Blue}🔑 Generating production Azure AI token...${Reset}"
-        $productionToken = az account get-access-token --scope https://ai.azure.com/.default --query accessToken -o tsv
-        if ($productionToken -and $productionToken.Length -gt 100) {
-            Write-Host "${Green}✅ Production token generated successfully (length: $($productionToken.Length))${Reset}"
-        } else {
-            Write-Host "${Red}❌ Failed to generate production token${Reset}"
+    if ($currentTenant -eq $productionTenant) {
+        Write-Host "${Green}✅ Already authenticated with production tenant${Reset}"
+    } else {
+        Write-Host "${Yellow}🔄 Switching from tenant $currentTenant to $productionTenant${Reset}"
+        az login --tenant $productionTenant --only-show-errors
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "${Red}❌ Failed to authenticate with production tenant${Reset}"
             exit 1
         }
-        
-        # Switch back to original tenant for source operations
-        if ($currentTenant -ne $productionTenant) {
-            Write-Host "${Blue}🔄 Switching back to source tenant for reading operations${Reset}"
-            az login --tenant $currentTenant --only-show-errors
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "${Yellow}⚠️  Warning: Could not switch back to original tenant${Reset}"
-            }
-        }
-        
-    } catch {
-        Write-Host "${Red}❌ Failed during production tenant authentication: $_${Reset}"
-        exit 1
     }
-} elseif ($productionResource) {
-    Write-Host "${Blue}🏭 Production resource specified - using current tenant for production token${Reset}"
     
-    try {
-        # Generate production token with current tenant
-        Write-Host "${Blue}🔑 Generating production Azure AI token (current tenant)...${Reset}"
-        $productionToken = az account get-access-token --scope https://ai.azure.com/.default --query accessToken -o tsv
-        if ($productionToken -and $productionToken.Length -gt 100) {
-            Write-Host "${Green}✅ Production token generated successfully (length: $($productionToken.Length))${Reset}"
-        } else {
-            Write-Host "${Red}❌ Failed to generate production token${Reset}"
-            exit 1
-        }
-    } catch {
-        Write-Host "${Red}❌ Failed to generate production token: $_${Reset}"
+    # Generate production token
+    Write-Host "${Blue}🔑 Generating production Azure AI token...${Reset}"
+    $productionToken = az account get-access-token --scope https://ai.azure.com/.default --query accessToken -o tsv
+    if ($productionToken -and $productionToken.Length -gt 100) {
+        Write-Host "${Green}✅ Production token generated successfully (length: $($productionToken.Length))${Reset}"
+    } else {
+        Write-Host "${Red}❌ Failed to generate production token${Reset}"
         exit 1
     }
-} else {
-    Write-Host "${Blue}🏠 Local development mode - using single tenant authentication${Reset}"
+    
+    # Switch back to source tenant if different (for reading v1 assistants)
+    if ($sourceTenant -and $currentTenant -ne $productionTenant) {
+        Write-Host "${Blue}🔄 Switching back to source tenant for reading operations: $sourceTenant${Reset}"
+        az login --tenant $sourceTenant --only-show-errors
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "${Yellow}⚠️  Warning: Could not switch back to source tenant${Reset}"
+        }
+    } elseif ($currentTenant -ne $productionTenant) {
+        Write-Host "${Blue}🔄 Switching back to original tenant for reading operations${Reset}"
+        az login --tenant $currentTenant --only-show-errors
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "${Yellow}⚠️  Warning: Could not switch back to original tenant${Reset}"
+        }
+    }
+    
+} catch {
+    Write-Host "${Red}❌ Failed during production tenant authentication: $_${Reset}"
+    exit 1
 }
 
 # Check if image exists
@@ -249,13 +258,9 @@ try {
         "-e", "AZ_TOKEN=$sourceToken"
     )
     
-    # Add production token if available
-    if ($productionToken) {
-        $dockerEnvVars += "-e", "PRODUCTION_TOKEN=$productionToken"
-        Write-Host "${Green}🏭 Passing both source and production tokens to container${Reset}"
-    } else {
-        Write-Host "${Green}🏠 Passing source token to container${Reset}"
-    }
+    # Add production token (required)
+    $dockerEnvVars += "-e", "PRODUCTION_TOKEN=$productionToken"
+    Write-Host "${Green}🏭 Passing both source and production tokens to container${Reset}"
     
     # Check if we need the beta version for project connection string
     $needsBetaVersion = $false
@@ -267,16 +272,8 @@ try {
         }
     }
     
-    # Filter out PowerShell-only arguments that shouldn't be passed to Python
-    $filteredArguments = @()
-    for ($i = 0; $i -lt $Arguments.Length; $i++) {
-        if ($Arguments[$i] -eq "--source-tenant") {
-            # Skip this argument and its value
-            $i++  # Skip the next element (the tenant ID)
-        } else {
-            $filteredArguments += $Arguments[$i]
-        }
-    }
+    # All arguments are now passed to Python (source-tenant is supported)
+    $filteredArguments = $Arguments
     
     # Add environment variable to indicate if beta version is needed
     if ($needsBetaVersion) {
