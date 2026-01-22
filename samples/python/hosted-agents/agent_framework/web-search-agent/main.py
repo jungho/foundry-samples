@@ -1,8 +1,12 @@
 import os
+from dotenv import load_dotenv
 from agent_framework import ChatAgent, HostedWebSearchTool
 from agent_framework_azure_ai import AzureAIAgentClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import DefaultAzureCredential
+
+# Load environment variables from .env file for local development
+load_dotenv()
 
 def create_agent() -> ChatAgent:
     """Create and return a ChatAgent with Bing Grounding search tool."""

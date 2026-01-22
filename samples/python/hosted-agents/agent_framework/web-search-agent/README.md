@@ -24,6 +24,8 @@ pip install -r requirements.txt
 
 2. Create a `.env` file with the following environment variables:
 
+> **Note:** The `.env` file is for local development only. When deploying to Azure AI Foundry, remove the `.env` file and configure environment variables in `agent.yaml` instead.
+
 ```bash
 AZURE_AI_PROJECT_ENDPOINT=https://<your-foundry-account>.services.ai.azure.com/api/projects/<your-project>
 AZURE_AI_MODEL_DEPLOYMENT_NAME=<your-model-deployment>  # e.g., gpt-4.1-mini
